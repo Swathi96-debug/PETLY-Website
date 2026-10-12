@@ -12,6 +12,7 @@ export const PRODUCTS_DATA = [
   },
   { 
     id: 'f3', category: 'food', name: 'Royal Rabbit Pellets', brand: 'BunnyChef', price: 15.99, rating: 4.5, reviews: 110, image: '🥕',
+    imageKey: 'carrot.jpg',
     description: 'Timothy hay based pellets enriched with Vitamin C for optimal digestive health.',
     frequentlyBought: ['b1']
   },
@@ -45,6 +46,7 @@ export const PRODUCTS_DATA = [
   // BEDS
   { 
     id: 'b1', category: 'beds', name: 'Orthopedic Calming Cloud', brand: 'DreamTail', price: 110.00, rating: 4.9, reviews: 2100, image: '🛌',
+    imageKey: 'bed.jpg',
     description: 'Memory foam base with raised edges for anxiety relief. Machine-washable cover.',
     frequentlyBought: ['t1']
   },

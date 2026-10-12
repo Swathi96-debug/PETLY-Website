@@ -21,12 +21,8 @@ import Adopt from './pages/Adopt';
 import Messages from './pages/Messages';
 import Wishlist from './pages/Wishlist';
 import ForgotPassword from './pages/ForgotPassword';
+import PetDetail from './pages/PetDetail';
 
-const PetProfile = () => (
-  <div className="min-h-screen pt-32 container">
-    <h2 className="text-4xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-white/40">Pet Profile - Coming Soon</h2>
-  </div>
-);
 
 const PrivateRoute = ({ children }) => {
   const { user, loading } = useAuth();
@@ -50,6 +46,7 @@ function App() {
                   <Route path="/services" element={<Services />} />
                   <Route path="/store" element={<Store />} />
                   <Route path="/community" element={<Community />} />
+                  <Route path="/community/post/:id" element={<Community />} />
                   <Route path="/messages" element={<PrivateRoute><Messages /></PrivateRoute>} />
                   <Route path="/health" element={<PrivateRoute><HealthHub /></PrivateRoute>} />
                   <Route path="/profile" element={<PrivateRoute><Profile /></PrivateRoute>} />
@@ -57,7 +54,7 @@ function App() {
                   <Route path="/login" element={<Login />} />
                   <Route path="/signup" element={<Signup />} />
                   <Route path="/forgot" element={<ForgotPassword />} />
-                  <Route path="/pet/:id" element={<PetProfile />} />
+                  <Route path="/pet/:id" element={<PetDetail />} />
                   <Route path="/admin" element={<AdminPanel />} />
                   <Route path="*" element={<Navigate to="/" replace />} />
                 </Routes>

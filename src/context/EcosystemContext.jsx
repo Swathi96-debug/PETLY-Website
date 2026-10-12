@@ -1,6 +1,7 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useState, useCallback, useMemo } from 'react';
 import { useAuth } from './AuthContext';
 import { AI_KNOWLEDGE_BASE, DEFAULT_AI_RESPONSE } from '../data/aiKnowledge';
+import { petsAPI, healthAPI, documentsAPI, adoptionAPI, communityAPI, quizAPI, storeAPI, servicesAPI } from '../services/api';
 
 const EcosystemContext = createContext();
 
@@ -32,15 +33,46 @@ const normalizeHealthCollection = (stored, fallback) => {
   }).filter(Boolean);
 };
 
-const petThemePalette = ['blue', 'purple', 'green', 'orange', 'yellow'];
+export const VALID_THEMES = ['purple', 'blue', 'green', 'pink', 'orange', 'cyan', 'yellow', 'red'];
 
-const getPetThemeColor = (pet, index = 0) => pet?.themeColor || petThemePalette[index % petThemePalette.length] || 'orange';
+export const mapCommunityCategory = (cat) => {
+  if (!cat) return 'General';
+  return String(cat).trim();
+};
+
+export const formatRelativeTime = (dateInput) => {
+  if (!dateInput) return 'Recently';
+  const now = Date.now();
+  const date = new Date(dateInput).getTime();
+  if (isNaN(date)) return 'Recently';
+  const diffSec = Math.floor((now - date) / 1000);
+  if (diffSec < 60) return 'Just now';
+  const diffMin = Math.floor(diffSec / 60);
+  if (diffMin < 60) return `${diffMin}m ago`;
+  const diffHour = Math.floor(diffMin / 60);
+  if (diffHour < 24) return `${diffHour}h ago`;
+  const diffDays = Math.floor(diffHour / 24);
+  if (diffDays < 7) return `${diffDays}d ago`;
+  return new Date(dateInput).toLocaleDateString();
+};
+
+export const normalizeThemeColor = (theme, petName = '', fallbackIndex = 0) => {
+  const t = String(theme || '').trim().toLowerCase();
+  if (VALID_THEMES.includes(t)) return t;
+  const lowerName = String(petName || '').toLowerCase();
+  if (lowerName === 'luna') return 'purple';
+  if (lowerName === 'fluffy') return 'orange';
+  if (lowerName === 'bailey') return 'pink';
+  if (lowerName === 'max') return 'blue';
+  if (lowerName === 'bluey') return 'green';
+  return VALID_THEMES[fallbackIndex % VALID_THEMES.length] || 'orange';
+};
 
 const normalizePetRegistry = (pets = []) => {
   return (Array.isArray(pets) ? pets : []).map((pet, index) => ({
     ...pet,
-    themeColor: getPetThemeColor(pet, index),
-    temperature: pet.temperature || '100.8°F',
+    themeColor: normalizeThemeColor(pet.themeColor, pet.name, index),
+    temperature: pet.temperature ? (String(pet.temperature).includes('°') ? pet.temperature : `${pet.temperature}°F`) : '100.8°F',
     status: pet.status || 'Healthy',
     healthScore: pet.healthScore || 90,
     medicalHistory: pet.medicalHistory || 'Routine wellness monitoring',
@@ -315,7 +347,425 @@ const initialMessages = [
 
 export const EcosystemProvider = ({ children }) => {
   const { user } = useAuth();
-  const userId = user?.id || 'guest';
+  const userId = (user?._id || user?.id)?.toString() || 'guest';
+
+  // MongoDB Pet state (Phase 4A)
+  const [mongoPets, setMongoPets] = useState([]);
+  const [petsLoading, setPetsLoading] = useState(false);
+  const [petsError, setPetsError] = useState(null);
+
+  const fetchPets = useCallback(async () => {
+    if (!user) {
+      setMongoPets([]);
+      return;
+    }
+    setPetsLoading(true);
+    setPetsError(null);
+    try {
+      const response = await petsAPI.getAll();
+      if (response.success && Array.isArray(response.pets)) {
+        setMongoPets(response.pets);
+      }
+    } catch (err) {
+      console.error('[EcosystemContext] Failed to load pets:', err.message);
+      setPetsError(err.message || 'Failed to load companions from server.');
+    } finally {
+      setPetsLoading(false);
+    }
+  }, [user]);
+
+  useEffect(() => {
+    fetchPets();
+  }, [fetchPets]);
+
+  // MongoDB Health & Documents state (Phase 4B)
+  const isValidMongoId = (id) => typeof id === 'string' && /^[0-9a-fA-F]{24}$/.test(id);
+
+  const [mongoHealthRecords, setMongoHealthRecords] = useState([]);
+  const [healthLoading, setHealthLoading] = useState(false);
+  const [healthError, setHealthError] = useState(null);
+
+  const [mongoDocuments, setMongoDocuments] = useState([]);
+  const [documentsLoading, setDocumentsLoading] = useState(false);
+  const [documentsError, setDocumentsError] = useState(null);
+
+  const fetchHealthRecords = useCallback(async (petId) => {
+    if (!user) {
+      setMongoHealthRecords([]);
+      return;
+    }
+    setHealthLoading(true);
+    setHealthError(null);
+    try {
+      const query = petId && isValidMongoId(petId) ? `pet=${petId}` : '';
+      const response = await healthAPI.getAll(query);
+      if (response.success && Array.isArray(response.records)) {
+        setMongoHealthRecords(response.records);
+      }
+    } catch (err) {
+      console.error('[EcosystemContext] Failed to load health records:', err.message);
+      setHealthError(err.message || 'Failed to load health records from server.');
+    } finally {
+      setHealthLoading(false);
+    }
+  }, [user]);
+
+  const fetchMedicalDocuments = useCallback(async (petId) => {
+    if (!user) {
+      setMongoDocuments([]);
+      return;
+    }
+    setDocumentsLoading(true);
+    setDocumentsError(null);
+    try {
+      const query = petId && isValidMongoId(petId) ? `pet=${petId}` : '';
+      const response = await documentsAPI.getAll(query);
+      if (response.success && Array.isArray(response.documents)) {
+        setMongoDocuments(response.documents);
+      }
+    } catch (err) {
+      console.error('[EcosystemContext] Failed to load medical documents:', err.message);
+      setDocumentsError(err.message || 'Failed to load medical documents from server.');
+    } finally {
+      setDocumentsLoading(false);
+    }
+  }, [user]);
+
+  useEffect(() => {
+    if (user) {
+      fetchHealthRecords();
+      fetchMedicalDocuments();
+    }
+  }, [user, fetchHealthRecords, fetchMedicalDocuments]);
+
+  // MongoDB Adoption & Applications state (Phase 5)
+  const [mongoAdoptionListings, setMongoAdoptionListings] = useState([]);
+  const [adoptionListingsLoading, setAdoptionListingsLoading] = useState(false);
+  const [adoptionListingsError, setAdoptionListingsError] = useState(null);
+
+  const [myApplications, setMyApplications] = useState([]);
+  const [myApplicationsLoading, setMyApplicationsLoading] = useState(false);
+  const [myApplicationsError, setMyApplicationsError] = useState(null);
+
+  const fetchAdoptionListings = useCallback(async (filterQuery = '') => {
+    setAdoptionListingsLoading(true);
+    setAdoptionListingsError(null);
+    try {
+      const response = await adoptionAPI.getAll(filterQuery);
+      if (response.success && Array.isArray(response.listings)) {
+        setMongoAdoptionListings(response.listings);
+      }
+    } catch (err) {
+      console.error('[EcosystemContext] Failed to load adoption listings:', err.message);
+      setAdoptionListingsError(err.message || 'Failed to load adoption listings from server.');
+    } finally {
+      setAdoptionListingsLoading(false);
+    }
+  }, []);
+
+  const fetchMyApplications = useCallback(async () => {
+    if (!user) {
+      setMyApplications([]);
+      return;
+    }
+    setMyApplicationsLoading(true);
+    setMyApplicationsError(null);
+    try {
+      const response = await adoptionAPI.getMyApplications();
+      if (response.success && Array.isArray(response.applications)) {
+        setMyApplications(response.applications);
+      }
+    } catch (err) {
+      console.error('[EcosystemContext] Failed to load user applications:', err.message);
+      setMyApplicationsError(err.message || 'Failed to load applications from server.');
+    } finally {
+      setMyApplicationsLoading(false);
+    }
+  }, [user]);
+
+  useEffect(() => {
+    fetchAdoptionListings();
+    if (user) {
+      fetchMyApplications();
+    }
+  }, [user, fetchAdoptionListings, fetchMyApplications]);
+
+  // MongoDB Community Posts state (Phase 6)
+  const [mongoCommunityPosts, setMongoCommunityPosts] = useState([]);
+  const [communityPostsLoading, setCommunityPostsLoading] = useState(false);
+  const [communityPostsError, setCommunityPostsError] = useState(null);
+
+  const fetchCommunityPosts = useCallback(async (filterQuery = '') => {
+    setCommunityPostsLoading(true);
+    setCommunityPostsError(null);
+    try {
+      const response = await communityAPI.getPosts(filterQuery);
+      if (response.success && Array.isArray(response.posts)) {
+        setMongoCommunityPosts(response.posts);
+      }
+    } catch (err) {
+      console.error('[EcosystemContext] Failed to load community posts:', err.message);
+      setCommunityPostsError(err.message || 'Failed to load community posts from server.');
+    } finally {
+      setCommunityPostsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchCommunityPosts();
+  }, [fetchCommunityPosts]);
+
+  // MongoDB Quiz Attempts state (Phase 7)
+  const [mongoQuizAttempts, setMongoQuizAttempts] = useState([]);
+  const [quizAttemptsLoading, setQuizAttemptsLoading] = useState(false);
+  const [quizAttemptsError, setQuizAttemptsError] = useState(null);
+
+  const fetchMyQuizAttempts = useCallback(async () => {
+    if (!user) {
+      setMongoQuizAttempts([]);
+      return;
+    }
+    setQuizAttemptsLoading(true);
+    setQuizAttemptsError(null);
+    try {
+      const response = await quizAPI.getMyAttempts();
+      if (response.success && Array.isArray(response.attempts)) {
+        setMongoQuizAttempts(response.attempts);
+      }
+    } catch (err) {
+      console.error('[EcosystemContext] Failed to load quiz attempts:', err.message);
+      setQuizAttemptsError(err.message || 'Failed to load quiz attempts.');
+    } finally {
+      setQuizAttemptsLoading(false);
+    }
+  }, [user]);
+
+  useEffect(() => {
+    if (user) {
+      fetchMyQuizAttempts();
+    } else {
+      setMongoQuizAttempts([]);
+    }
+  }, [user, fetchMyQuizAttempts]);
+
+  // MongoDB Companion Matches state (Phase 7 Extension)
+  const [companionMatches, setCompanionMatches] = useState([]);
+  const [companionMatchesLoading, setCompanionMatchesLoading] = useState(false);
+  const [companionMatchesError, setCompanionMatchesError] = useState(null);
+
+  const fetchMyCompanionMatches = useCallback(async () => {
+    if (!user) {
+      setCompanionMatches([]);
+      return;
+    }
+    setCompanionMatchesLoading(true);
+    setCompanionMatchesError(null);
+    try {
+      const response = await quizAPI.getMyCompanionMatches();
+      if (response.success && Array.isArray(response.matches)) {
+        setCompanionMatches(response.matches);
+      }
+    } catch (err) {
+      console.error('[EcosystemContext] Failed to load companion matches:', err.message);
+      setCompanionMatchesError(err.message || 'Failed to load companion matches.');
+    } finally {
+      setCompanionMatchesLoading(false);
+    }
+  }, [user]);
+
+  useEffect(() => {
+    if (user) {
+      fetchMyCompanionMatches();
+    } else {
+      setCompanionMatches([]);
+    }
+  }, [user, fetchMyCompanionMatches]);
+
+  const saveCompanionMatch = async (matchData) => {
+    if (user) {
+      const response = await quizAPI.saveCompanionMatch(matchData);
+      if (response.success && response.match) {
+        setCompanionMatches((prev) => [response.match, ...prev]);
+        return response.match;
+      }
+      throw new Error(response.message || 'Failed to save companion match');
+    } else {
+      // Guest local fallback
+      const localMatch = {
+        _id: `comp-match-${Date.now()}`,
+        id: `comp-match-${Date.now()}`,
+        answers: matchData.answers || {},
+        primaryRecommendation: matchData.primaryRecommendation,
+        compatibilityScore: matchData.compatibilityScore || matchData.primaryRecommendation?.score || 0,
+        alternativeRankings: matchData.alternativeRankings || [],
+        allMatches: matchData.allMatches || [],
+        createdAt: new Date().toISOString(),
+      };
+      setCompanionMatches((prev) => [localMatch, ...prev]);
+      return localMatch;
+    }
+  };
+
+  const getCompanionMatchDetails = async (id) => {
+    return quizAPI.getCompanionMatchById(id);
+  };
+
+  // ==========================================
+  // MONGODB STORE DATA (PHASE 8B)
+  // ==========================================
+  const [storeProducts, setStoreProducts] = useState([]);
+  const [storeProductsLoading, setStoreProductsLoading] = useState(true);
+  const [storeProductsError, setStoreProductsError] = useState(null);
+
+  const fetchStoreProducts = useCallback(async (params = '') => {
+    setStoreProductsLoading(true);
+    setStoreProductsError(null);
+    try {
+      const response = await storeAPI.getProducts(params);
+      const list = response.products || (Array.isArray(response) ? response : []);
+      setStoreProducts(list);
+      return list;
+    } catch (err) {
+      console.error('[EcosystemContext] Failed to load store products:', err.message);
+      setStoreProductsError(err.message || 'Failed to load products.');
+      return [];
+    } finally {
+      setStoreProductsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchStoreProducts();
+  }, [fetchStoreProducts]);
+
+  // MongoDB Wishlist State
+  const [mongoWishlist, setMongoWishlist] = useState([]);
+  const [mongoWishlistPets, setMongoWishlistPets] = useState([]);
+  const [wishlistLoading, setWishlistLoading] = useState(false);
+
+  const fetchWishlist = useCallback(async () => {
+    if (!user) {
+      setMongoWishlist([]);
+      setMongoWishlistPets([]);
+      return;
+    }
+    setWishlistLoading(true);
+    try {
+      const res = await storeAPI.getWishlist();
+      if (res.success) {
+        if (Array.isArray(res.wishlist)) {
+          setMongoWishlist(res.wishlist);
+        }
+        if (Array.isArray(res.wishlistPets)) {
+          setMongoWishlistPets(res.wishlistPets);
+        }
+      }
+    } catch (err) {
+      console.error('[EcosystemContext] Failed to load wishlist:', err.message);
+    } finally {
+      setWishlistLoading(false);
+    }
+  }, [user]);
+
+  // MongoDB Cart State
+  const [mongoCart, setMongoCart] = useState([]);
+  const [cartLoading, setCartLoading] = useState(false);
+
+  const fetchCart = useCallback(async () => {
+    if (!user) {
+      setMongoCart([]);
+      return;
+    }
+    setCartLoading(true);
+    try {
+      const res = await storeAPI.getCart();
+      if (res.success && Array.isArray(res.cart)) {
+        setMongoCart(res.cart);
+      }
+    } catch (err) {
+      console.error('[EcosystemContext] Failed to load cart:', err.message);
+    } finally {
+      setCartLoading(false);
+    }
+  }, [user]);
+
+  // MongoDB Orders State
+  const [storeOrders, setStoreOrders] = useState([]);
+  const [ordersLoading, setOrdersLoading] = useState(false);
+
+  // MongoDB Service Providers State (public — always load)
+  const [mongoServiceProviders, setMongoServiceProviders] = useState([]);
+  const [serviceProvidersLoading, setServiceProvidersLoading] = useState(false);
+
+  // MongoDB Service Bookings State (private — auth only)
+  const [mongoServiceBookings, setMongoServiceBookings] = useState([]);
+  const [serviceBookingsLoading, setServiceBookingsLoading] = useState(false);
+
+  const fetchOrders = useCallback(async () => {
+    if (!user) {
+      setStoreOrders([]);
+      return;
+    }
+    setOrdersLoading(true);
+    try {
+      const res = await storeAPI.getOrders();
+      const list = res.orders || (Array.isArray(res) ? res : []);
+      setStoreOrders(list);
+    } catch (err) {
+      console.error('[EcosystemContext] Failed to load orders:', err.message);
+    } finally {
+      setOrdersLoading(false);
+    }
+  }, [user]);
+
+  const fetchServiceProviders = useCallback(async (category = '') => {
+    setServiceProvidersLoading(true);
+    try {
+      const params = category && category !== 'all' ? `category=${encodeURIComponent(category)}` : '';
+      const res = await servicesAPI.getProviders(params);
+      setMongoServiceProviders(res.providers || []);
+    } catch (err) {
+      console.error('[EcosystemContext] Failed to load service providers:', err.message);
+    } finally {
+      setServiceProvidersLoading(false);
+    }
+  }, []);
+
+  const fetchServiceBookings = useCallback(async () => {
+    if (!user) {
+      setMongoServiceBookings([]);
+      return;
+    }
+    setServiceBookingsLoading(true);
+    try {
+      const res = await servicesAPI.getBookings();
+      setMongoServiceBookings(res.bookings || []);
+    } catch (err) {
+      console.error('[EcosystemContext] Failed to load service bookings:', err.message);
+    } finally {
+      setServiceBookingsLoading(false);
+    }
+  }, [user]);
+
+  useEffect(() => {
+    // Service providers are public — always load them
+    fetchServiceProviders();
+  }, [fetchServiceProviders]);
+
+  useEffect(() => {
+    if (user) {
+      fetchWishlist();
+      fetchCart();
+      fetchOrders();
+      fetchServiceBookings();
+    } else {
+      setMongoWishlist([]);
+      setMongoWishlistPets([]);
+      setMongoCart([]);
+      setStoreOrders([]);
+      setMongoServiceBookings([]);
+    }
+  }, [user, fetchWishlist, fetchCart, fetchOrders, fetchServiceBookings]);
 
   const [cart, setCart] = useState(() => loadJSON('petly_cart', []));
   const [wishlistPets, setWishlistPets] = useState(() => normalizeWishlistCollection(loadJSON('petly_wishlist_pets', [])));
@@ -468,12 +918,12 @@ export const EcosystemProvider = ({ children }) => {
   const [quizHistory, setQuizHistory] = useState(() => loadJSON('petly_quiz_history', []));
   const [communityPosts, setCommunityPosts] = useState(() => loadJSON('petly_community_posts', initialCommunityPosts));
   const [communities, setCommunities] = useState(() => loadJSON('petly_comm_list', [
-    { id: 'dogs', name: 'Dogs', slug: 'dogs', icon: '🐕', members: '1.2m', adminId: 'system' },
-    { id: 'cats', name: 'Cats', slug: 'cats', icon: '🐈', members: '980k', adminId: 'system' },
-    { id: 'birds', name: 'Birds', slug: 'birds', icon: '🦜', members: '120k', adminId: 'system' },
-    { id: 'rescue', name: 'Pet Rescue Stories', slug: 'rescue', icon: '❤️', members: '450k', adminId: 'system' },
-    { id: 'health', name: 'Pet Health', slug: 'health', icon: '🏥', members: '310k', adminId: 'system' },
-    { id: 'training', name: 'Pet Training', slug: 'training', icon: '🎓', members: '280k', adminId: 'system' }
+    { id: 'dogs', name: 'Dogs', slug: 'dogs', icon: '🐕', members: '1.2m', adminId: 'system', isBuiltIn: true },
+    { id: 'cats', name: 'Cats', slug: 'cats', icon: '🐈', members: '980k', adminId: 'system', isBuiltIn: true },
+    { id: 'birds', name: 'Birds', slug: 'birds', icon: '🦜', members: '120k', adminId: 'system', isBuiltIn: true },
+    { id: 'rescue', name: 'Pet Rescue Stories', slug: 'rescue', icon: '❤️', members: '450k', adminId: 'system', isBuiltIn: true },
+    { id: 'health', name: 'Pet Health', slug: 'health', icon: '🏥', members: '310k', adminId: 'system', isBuiltIn: true },
+    { id: 'training', name: 'Pet Training', slug: 'training', icon: '🎓', members: '280k', adminId: 'system', isBuiltIn: true }
   ]));
   const [messages, setMessages] = useState(() => loadJSON('petly_messages', initialMessages));
   const [aiConversations, setAIConversations] = useState(() => loadJSON('petly_ai_conversations', []));
@@ -530,7 +980,7 @@ export const EcosystemProvider = ({ children }) => {
 
   // Migrate legacy health records without petId to associate with a pet
   useEffect(() => {
-    if (!adoptions || adoptions.length === 0) return;
+    if (user || !adoptions || adoptions.length === 0) return;
     const primaryPetId = adoptions[0].id;
     let changed = false;
 
@@ -557,7 +1007,7 @@ export const EcosystemProvider = ({ children }) => {
     if (milestones.some(i => !i.petId)) ensurePetId(milestones, setMilestones);
     changed = false;
     if (bookings.some(i => !i.petId)) ensurePetId(bookings, setBookings);
-  }, [adoptions]);
+  }, [adoptions, user]);
 
   useEffect(() => {
     localStorage.setItem('petly_bookings', JSON.stringify(bookings));
@@ -587,94 +1037,446 @@ export const EcosystemProvider = ({ children }) => {
     localStorage.setItem('petly_ai_current_conversation', JSON.stringify(activeAIConversationId));
   }, [activeAIConversationId]);
 
-  const currentCart = cart.filter((item) => item.userId === userId);
-  const currentWishlistPets = wishlistPets.filter((item) => item.userId === userId).map((item) => item.id);
-  const currentWishlistProducts = wishlistProducts.filter((item) => item.userId === userId).map((item) => item.id);
-  const currentAdoptions = adoptions.filter((item) => item.userId === userId);
+  const currentCart = user
+    ? mongoCart.map((item) => {
+        const prod = item.product || {};
+        return {
+          id: prod._id || prod.id || item._id,
+          _id: prod._id || item._id,
+          productId: prod._id || prod.id,
+          product: prod,
+          name: prod.name || 'Petly Supply',
+          brand: prod.brand || 'PETLY',
+          category: prod.category || 'General',
+          price: typeof prod.price === 'number' ? prod.price : 0,
+          image: prod.image || '📦',
+          imageKey: prod.imageKey || '',
+          stock: prod.stock ?? 50,
+          quantity: item.quantity || 1,
+          userId,
+        };
+      })
+    : cart.filter((item) => item.userId === userId);
+
+  const currentWishlistPets = user
+    ? Array.from(new Set(mongoWishlistPets.map((id) => String(id)).filter(Boolean)))
+    : wishlistPets.filter((item) => item.userId === userId).map((item) => String(item.id));
+  const currentWishlistProducts = user
+    ? Array.from(new Set([
+        ...mongoWishlist.map((p) => p?._id?.toString()).filter(Boolean),
+        ...mongoWishlist.map((p) => p?.demoId).filter(Boolean),
+        ...mongoWishlist.map((p) => p?.id).filter(Boolean),
+      ]))
+    : wishlistProducts.filter((item) => item.userId === userId).map((item) => String(item.id));
   const currentBookings = bookings.filter((item) => item.userId === userId);
+  const currentAdoptions = user
+    ? mongoPets.map((p, idx) => ({
+        ...p,
+        id: p._id,
+        _id: p._id,
+        userId,
+        name: p.name,
+        species: p.species,
+        breed: p.breed,
+        gender: p.gender,
+        weight: p.weight,
+        image: p.photoUrl || (p.species?.toLowerCase() === 'cat' ? '🐱' : p.species?.toLowerCase() === 'rabbit' ? '🐰' : '🐶'),
+        status: p.healthStatus || 'Healthy',
+        temperature: p.temperature ? (String(p.temperature).includes('°') ? p.temperature : `${p.temperature}°F`) : '101.2°F',
+        height: p.height || '',
+        color: p.color || '',
+        themeColor: normalizeThemeColor(p.themeColor, p.name, idx),
+        dob: p.dob || '',
+        adoptionDate: p.adoptionDate || '',
+        allergies: p.allergies || [],
+        medicalConditions: p.medicalConditions || [],
+        healthScore: p.healthScore || 92,
+      }))
+    : adoptions.filter((item) => item.userId === 'guest');
   const currentQuizHistory = quizHistory.filter((item) => item.userId === userId);
   const currentWeightHistory = (() => {
     const personal = weightHistory.filter((item) => item.userId === userId);
     return personal.length ? personal : weightHistory.filter((item) => item.userId === 'guest');
   })();
   const currentVaccines = (() => {
+    if (user) {
+      return mongoHealthRecords
+        .filter((r) => r.type === 'vaccination')
+        .map((r) => ({
+          id: r._id,
+          _id: r._id,
+          petId: String(r.pet?._id || r.pet?.id || r.pet || ''),
+          petName: r.pet?.name || '',
+          name: r.title || 'Vaccine',
+          date: r.date ? (typeof r.date === 'string' ? r.date.split('T')[0] : new Date(r.date).toISOString().split('T')[0]) : '',
+          status: r.status || 'completed',
+          notes: r.notes || r.description || '',
+        }));
+    }
     const personal = vaccines.filter((item) => item.userId === userId);
     return personal.length ? personal : vaccines.filter((item) => item.userId === 'guest');
   })();
   const currentTimeline = (() => {
+    if (user) {
+      return mongoHealthRecords.map((r) => {
+        let icon = 'clock';
+        let color = 'blue';
+        if (r.type === 'vaccination') {
+          icon = 'syringe';
+          color = r.status === 'completed' ? 'green' : 'orange';
+        } else if (r.type === 'medication') {
+          icon = 'pill';
+          color = 'purple';
+        } else if (r.type === 'appointment') {
+          icon = 'stethoscope';
+          color = 'blue';
+        } else if (r.type === 'weight') {
+          icon = 'clock';
+          color = 'orange';
+        }
+        return {
+          id: r._id,
+          _id: r._id,
+          petId: String(r.pet?._id || r.pet?.id || r.pet || ''),
+          petName: r.pet?.name || '',
+          title: r.title || (r.type === 'weight' ? `Weight: ${r.value} kg` : 'Health Event'),
+          date: r.date ? (typeof r.date === 'string' ? r.date.split('T')[0] : new Date(r.date).toISOString().split('T')[0]) : '',
+          icon,
+          color,
+          completed: r.status === 'completed',
+          status: r.status || (r.completed ? 'completed' : 'scheduled'),
+          notes: r.notes || r.description || '',
+          description: r.notes || r.description || '',
+        };
+      });
+    }
     const personal = timeline.filter((item) => item.userId === userId);
     return personal.length ? personal : timeline.filter((item) => item.userId === 'guest');
   })();
   const currentMedications = (() => {
+    if (user) {
+      return mongoHealthRecords
+        .filter((r) => r.type === 'medication' && (r.status === 'ongoing' || r.status === 'active' || !r.status))
+        .map((r) => {
+          const parts = (r.description || '').split('|');
+          const freqPart = parts[0]?.trim() || (r.notes?.includes('Daily') ? 'Daily' : 'Daily');
+          const nextPart = r.description?.includes('Next:')
+            ? r.description.split('Next:')[1]?.trim()
+            : (r.notes?.includes('Next:') ? r.notes.split('Next:')[1]?.trim() : (r.next || 'Ongoing'));
+          return {
+            id: r._id,
+            _id: r._id,
+            petId: String(r.pet?._id || r.pet?.id || r.pet || ''),
+            petName: r.pet?.name || '',
+            name: r.title || 'Medication',
+            dose: r.value || r.dose || '1 dose',
+            frequency: freqPart,
+            next: nextPart,
+            status: r.status || 'ongoing',
+            notes: r.notes || r.description || '',
+          };
+        });
+    }
     const personal = medications.filter((item) => item.userId === userId);
     return personal.length ? personal : medications.filter((item) => item.userId === 'guest');
   })();
   const currentMilestones = (() => {
+    if (user) {
+      return mongoHealthRecords
+        .filter((r) => {
+          if (r.type === 'vaccination' || r.type === 'weight' || r.type === 'medication') return false;
+          if (r.type === 'appointment') return r.status === 'completed';
+          return true;
+        })
+        .map((r) => ({
+          id: r._id,
+          _id: r._id,
+          petId: String(r.pet?._id || r.pet?.id || r.pet || ''),
+          petName: r.pet?.name || '',
+          title: r.title || 'Health Milestone',
+          date: r.date ? (typeof r.date === 'string' ? r.date.split('T')[0] : new Date(r.date).toISOString().split('T')[0]) : '—',
+          category: r.type === 'appointment' ? 'vet' : 'health',
+          achieved: r.status === 'completed' || Boolean(r.achieved),
+          status: r.status || 'completed',
+          description: r.notes || r.description || '',
+          notes: r.notes || r.description || '',
+        }));
+    }
     const personal = milestones.filter((item) => item.userId === userId);
     return personal.length ? personal : milestones.filter((item) => item.userId === 'guest');
   })();
   const userMessages = messages.filter((item) => item.userId === userId);
   const userConversations = aiConversations.filter((item) => item.userId === userId);
 
+  const resolveProductId = useCallback((idOrProduct) => {
+    if (!idOrProduct) return null;
+    if (typeof idOrProduct === 'object') {
+      return idOrProduct._id || idOrProduct.id;
+    }
+    const id = String(idOrProduct);
+    if (/^[0-9a-fA-F]{24}$/.test(id)) {
+      return id;
+    }
+    const match = storeProducts.find((p) => p.demoId === id || p.id === id);
+    return match?._id || id;
+  }, [storeProducts]);
+
   const cartTotal = currentCart.reduce((sum, item) => sum + item.price * item.quantity, 0);
   const cartCount = currentCart.reduce((sum, item) => sum + item.quantity, 0);
 
-  const addToCart = (product) => {
-    setCart((prev) => {
-      const existing = prev.find((item) => item.userId === userId && item.id === product.id);
-      if (existing) {
-        return prev.map((item) =>
-          item.userId === userId && item.id === product.id
-            ? { ...item, quantity: item.quantity + 1 }
-            : item
-        );
-      }
-      return [...prev, { ...product, quantity: 1, userId, id: product.id }];
-    });
-  };
+  const addToCart = async (product, quantity = 1) => {
+    const targetId = resolveProductId(product);
+    if (!targetId) return { success: false, message: 'Invalid product' };
 
-  const removeFromCart = (id) => {
-    setCart((prev) => prev.filter((item) => !(item.userId === userId && item.id === id)));
-  };
-
-  const updateCartQuantity = (id, quantity) => {
-    if (quantity <= 0) {
-      removeFromCart(id);
-      return;
+    if (product.stock !== undefined && product.stock <= 0) {
+      return { success: false, message: 'Product is currently out of stock.' };
     }
-    setCart((prev) =>
-      prev.map((item) =>
-        item.userId === userId && item.id === id ? { ...item, quantity } : item
-      )
+
+    if (user) {
+      try {
+        const res = await storeAPI.addToCart(targetId, quantity);
+        if (res.success && Array.isArray(res.cart)) {
+          setMongoCart(res.cart);
+          return { success: true };
+        }
+      } catch (err) {
+        console.error('[EcosystemContext] addToCart error:', err.message);
+        return { success: false, message: err.message };
+      }
+    } else {
+      setCart((prev) => {
+        const existing = prev.find((item) => item.userId === userId && item.id === product.id);
+        if (existing) {
+          return prev.map((item) =>
+            item.userId === userId && item.id === product.id
+              ? { ...item, quantity: item.quantity + quantity }
+              : item
+          );
+        }
+        return [...prev, { ...product, quantity, userId, id: product.id || targetId }];
+      });
+      return { success: true };
+    }
+  };
+
+  const removeFromCart = async (id) => {
+    const targetId = resolveProductId(id);
+    if (user) {
+      try {
+        const res = await storeAPI.removeFromCart(targetId);
+        if (res.success && Array.isArray(res.cart)) {
+          setMongoCart(res.cart);
+        }
+      } catch (err) {
+        console.error('[EcosystemContext] removeFromCart error:', err.message);
+      }
+    } else {
+      setCart((prev) => prev.filter((item) => !(item.userId === userId && (item.id === id || item._id === id))));
+    }
+  };
+
+  const updateCartQuantity = async (id, quantity) => {
+    const targetId = resolveProductId(id);
+    if (quantity <= 0) {
+      return await removeFromCart(id);
+    }
+    if (user) {
+      try {
+        const res = await storeAPI.updateCartQuantity(targetId, quantity);
+        if (res.success && Array.isArray(res.cart)) {
+          setMongoCart(res.cart);
+        }
+      } catch (err) {
+        console.error('[EcosystemContext] updateCartQuantity error:', err.message);
+      }
+    } else {
+      setCart((prev) =>
+        prev.map((item) =>
+          item.userId === userId && (item.id === id || item._id === id)
+            ? { ...item, quantity }
+            : item
+        )
+      );
+    }
+  };
+
+  const clearCart = async () => {
+    if (user) {
+      try {
+        await storeAPI.clearCart();
+        setMongoCart([]);
+      } catch (err) {
+        console.error('[EcosystemContext] clearCart error:', err.message);
+      }
+    } else {
+      setCart((prev) => prev.filter((item) => item.userId !== userId));
+    }
+  };
+
+  const toggleWishlistPet = async (id) => {
+    if (!id) return;
+    const cleanId = String(id).trim();
+    if (user) {
+      try {
+        const res = await storeAPI.toggleWishlistPet(cleanId);
+        if (res.success && Array.isArray(res.wishlistPets)) {
+          setMongoWishlistPets(res.wishlistPets);
+        } else {
+          await fetchWishlist();
+        }
+      } catch (err) {
+        console.error('[EcosystemContext] toggleWishlistPet error:', err.message);
+      }
+    } else {
+      setWishlistPets((prev) => {
+        const exists = prev.some((item) => String(item.userId) === String(userId) && String(item.id) === cleanId);
+        if (exists) {
+          return prev.filter((item) => !(String(item.userId) === String(userId) && String(item.id) === cleanId));
+        }
+        return [
+          ...prev.filter((item) => !(String(item.id) === cleanId && String(item.userId || userId) === String(userId))),
+          { userId, id: cleanId }
+        ];
+      });
+    }
+  };
+
+  const removeFromWishlistPet = async (id) => {
+    if (!id) return;
+    const cleanId = String(id).trim();
+    if (user) {
+      try {
+        const res = await storeAPI.removeFromWishlistPet(cleanId);
+        if (res.success && Array.isArray(res.wishlistPets)) {
+          setMongoWishlistPets(res.wishlistPets);
+        } else {
+          await fetchWishlist();
+        }
+      } catch (err) {
+        console.error('[EcosystemContext] removeFromWishlistPet error:', err.message);
+      }
+    }
+    setWishlistPets((prev) =>
+      prev.filter((item) => !(String(item.userId) === String(userId) && String(item.id) === cleanId))
     );
   };
 
-  const clearCart = () => setCart((prev) => prev.filter((item) => item.userId !== userId));
+  const removeFromWishlistProduct = async (id) => {
+    if (!id) return;
+    const targetId = resolveProductId(id);
+    const cleanId = String(id).trim();
+    const cleanTargetId = targetId ? String(targetId).trim() : null;
 
-  const toggleWishlistPet = (id) => {
-    setWishlistPets((prev) => {
-      const exists = prev.some((item) => item.userId === userId && item.id === id);
-      if (exists) {
-        return prev.filter((item) => !(item.userId === userId && item.id === id));
+    if (user && targetId) {
+      try {
+        const res = await storeAPI.removeFromWishlist(targetId);
+        if (res.success && Array.isArray(res.wishlist)) {
+          setMongoWishlist(res.wishlist);
+        } else {
+          await fetchWishlist();
+        }
+      } catch (err) {
+        console.error('[EcosystemContext] removeFromWishlistProduct error:', err.message);
       }
-      return [
-        ...prev.filter((item) => !(item.id === id && !item.userId)),
-        { userId, id }
-      ];
-    });
+    }
+    setWishlistProducts((prev) =>
+      prev.filter((item) => !(String(item.userId) === String(userId) && (String(item.id) === cleanId || (cleanTargetId && String(item.id) === cleanTargetId))))
+    );
   };
 
-  const toggleWishlistProduct = (id) => {
-    setWishlistProducts((prev) => {
-      const exists = prev.some((item) => item.userId === userId && item.id === id);
-      if (exists) {
-        return prev.filter((item) => !(item.userId === userId && item.id === id));
+  const toggleWishlistProduct = async (id) => {
+    if (!id) return;
+    const targetId = resolveProductId(id);
+    if (user && targetId) {
+      try {
+        const res = await storeAPI.toggleWishlist(targetId);
+        if (res.success) {
+          if (Array.isArray(res.wishlist)) {
+            setMongoWishlist(res.wishlist);
+          } else {
+            await fetchWishlist();
+          }
+          return { success: true, isAdded: res.isAdded };
+        }
+      } catch (err) {
+        console.error('[EcosystemContext] toggleWishlistProduct error:', err.message);
       }
-      return [
-        ...prev.filter((item) => !(item.id === id && !item.userId)),
-        { userId, id }
-      ];
-    });
+    } else {
+      const cleanId = String(id).trim();
+      setWishlistProducts((prev) => {
+        const exists = prev.some((item) => String(item.userId) === String(userId) && String(item.id) === cleanId);
+        if (exists) {
+          return prev.filter((item) => !(String(item.userId) === String(userId) && String(item.id) === cleanId));
+        }
+        return [
+          ...prev.filter((item) => !(String(item.id) === cleanId && String(item.userId || userId) === String(userId))),
+          { userId, id: cleanId }
+        ];
+      });
+    }
+  };
+
+  const createOrder = async (orderPayload) => {
+    if (!user) {
+      return { success: false, message: 'Please sign in to complete your checkout.' };
+    }
+    try {
+      const res = await storeAPI.createOrder(orderPayload);
+      if (res.success || res.order) {
+        await fetchCart();
+        await fetchOrders();
+        return { success: true, order: res.order || res };
+      }
+      return { success: false, message: res.message || 'Failed to place order.' };
+    } catch (err) {
+      console.error('[EcosystemContext] createOrder error:', err.message);
+      return { success: false, message: err.message };
+    }
+  };
+
+  const cancelOrder = async (orderId) => {
+    if (!user) return { success: false, message: 'Please sign in.' };
+    try {
+      const res = await storeAPI.cancelOrder(orderId);
+      if (res.success) {
+        await fetchOrders();
+        return { success: true, order: res.order };
+      }
+      return { success: false, message: res.message || 'Failed to cancel order.' };
+    } catch (err) {
+      console.error('[EcosystemContext] cancelOrder error:', err.message);
+      return { success: false, message: err.message };
+    }
+  };
+
+  const createServiceBooking = async (bookingPayload) => {
+    if (!user) return { success: false, message: 'Please sign in to book a service.' };
+    try {
+      const res = await servicesAPI.createBooking(bookingPayload);
+      if (res.success && res.booking) {
+        await fetchServiceBookings();
+        return { success: true, booking: res.booking };
+      }
+      return { success: false, message: res.message || 'Failed to create booking.' };
+    } catch (err) {
+      console.error('[EcosystemContext] createServiceBooking error:', err.message);
+      return { success: false, message: err.message };
+    }
+  };
+
+  const cancelServiceBooking = async (bookingId) => {
+    if (!user) return { success: false, message: 'Please sign in.' };
+    try {
+      const res = await servicesAPI.cancelBooking(bookingId);
+      if (res.success) {
+        await fetchServiceBookings();
+        return { success: true };
+      }
+      return { success: false, message: res.message || 'Failed to cancel booking.' };
+    } catch (err) {
+      console.error('[EcosystemContext] cancelServiceBooking error:', err.message);
+      return { success: false, message: err.message };
+    }
   };
 
   const addWeightRecord = (newVal, petId = null) => {
@@ -768,8 +1570,363 @@ export const EcosystemProvider = ({ children }) => {
     setMilestones((prev) => [...prev, ...seed.healthMilestones.map((item, index) => ({ id: Date.now() + 400 + index, userId, petId, ...item }))]);
   };
 
+  // MongoDB Pet CRUD Functions (Phase 4A)
+  const createPet = async (petData) => {
+    setPetsError(null);
+    try {
+      const response = await petsAPI.create({
+        name: petData.name,
+        species: petData.species,
+        breed: petData.breed || 'Mixed',
+        age: petData.age !== undefined ? Number(petData.age) : 1,
+        gender: petData.gender || 'Unknown',
+        weight: petData.weight !== undefined ? Number(petData.weight) : 0,
+        description: petData.description || petData.medicalNotes || '',
+        temperature: petData.temperature || '',
+        height: petData.height || '',
+        color: petData.color || '',
+        themeColor: petData.themeColor ? String(petData.themeColor).trim().toLowerCase() : 'orange',
+        dob: petData.dob || '',
+        adoptionDate: petData.adoptionDate || '',
+        allergies: petData.allergies || [],
+        medicalConditions: petData.medicalConditions || [],
+        photoKey: petData.photoKey || '',
+        photoUrl: petData.photoUrl || petData.photo || petData.image || '',
+        healthStatus: petData.healthStatus || petData.status || 'Healthy',
+        isAdoptable: Boolean(petData.isAdoptable),
+      });
+
+      if (response.success && response.pet) {
+        setMongoPets((prev) => [response.pet, ...prev]);
+        return response.pet;
+      }
+    } catch (err) {
+      setPetsError(err.message || 'Failed to create pet');
+      throw err;
+    }
+  };
+
+  const updatePet = async (id, updateData) => {
+    setPetsError(null);
+    try {
+      const response = await petsAPI.update(id, updateData);
+      if (response.success && response.pet) {
+        setMongoPets((prev) =>
+          prev.map((p) => (p._id === id || p.id === id ? response.pet : p))
+        );
+        return response.pet;
+      }
+    } catch (err) {
+      setPetsError(err.message || 'Failed to update pet');
+      throw err;
+    }
+  };
+
+  const deletePet = async (id) => {
+    setPetsError(null);
+    try {
+      const response = await petsAPI.delete(id);
+      if (response.success) {
+        setMongoPets((prev) => prev.filter((p) => p._id !== id && p.id !== id));
+        return true;
+      }
+    } catch (err) {
+      setPetsError(err.message || 'Failed to delete pet');
+      throw err;
+    }
+  };
+
+  // MongoDB Health Record CRUD (Phase 4B)
+  const createHealthRecord = async (recordData) => {
+    setHealthError(null);
+    try {
+      if (user && isValidMongoId(recordData.pet)) {
+        const response = await healthAPI.create(recordData);
+        const rec = response.record || response.healthRecord;
+        if (response.success && rec) {
+          setMongoHealthRecords((prev) => [rec, ...prev]);
+          return rec;
+        }
+      } else {
+        // Fallback for demo/guest mode
+        if (recordData.type === 'weight') {
+          addWeightRecord({
+            petId: recordData.pet,
+            month: new Intl.DateTimeFormat('en-US', { month: 'short' }).format(new Date(recordData.date || Date.now())),
+            weight: parseFloat(recordData.value) || 0,
+          });
+        } else if (recordData.type === 'vaccination') {
+          addVaccinationRecord({
+            petId: recordData.pet,
+            name: recordData.title,
+            date: recordData.date || new Date().toISOString().split('T')[0],
+            status: recordData.status || 'completed',
+          });
+        } else if (recordData.type === 'medication') {
+          addMedicationRecord({
+            petId: recordData.pet,
+            name: recordData.title,
+            dose: recordData.value || '',
+            frequency: 'Daily',
+            next: '',
+          });
+        } else {
+          addTimelineRecord({
+            petId: recordData.pet,
+            title: recordData.title,
+            date: recordData.date || new Date().toISOString().split('T')[0],
+            notes: recordData.notes || recordData.description || '',
+            icon: 'stethoscope',
+            color: 'blue',
+            category: 'vet',
+            achieved: true,
+          });
+        }
+        return { ...recordData, id: Date.now() };
+      }
+    } catch (err) {
+      setHealthError(err.message || 'Failed to create health record');
+      throw err;
+    }
+  };
+
+  const updateHealthRecord = async (id, updateData) => {
+    setHealthError(null);
+    try {
+      if (user && isValidMongoId(id)) {
+        const response = await healthAPI.update(id, updateData);
+        if (response.success && response.record) {
+          setMongoHealthRecords((prev) =>
+            prev.map((r) => (r._id === id || r.id === id ? response.record : r))
+          );
+          return response.record;
+        }
+      }
+    } catch (err) {
+      setHealthError(err.message || 'Failed to update health record');
+      throw err;
+    }
+  };
+
+  const deleteHealthRecord = async (id) => {
+    setHealthError(null);
+    try {
+      if (user && isValidMongoId(id)) {
+        const response = await healthAPI.delete(id);
+        if (response.success) {
+          setMongoHealthRecords((prev) => prev.filter((r) => r._id !== id && r.id !== id));
+          return true;
+        }
+      }
+    } catch (err) {
+      setHealthError(err.message || 'Failed to delete health record');
+      throw err;
+    }
+  };
+
+  // MongoDB Medical Documents (Phase 4B - S3 Vault)
+  const uploadMedicalDocument = async (formDataOrData) => {
+    setDocumentsError(null);
+    try {
+      const response = await documentsAPI.upload(formDataOrData);
+      if (response.success && response.document) {
+        setMongoDocuments((prev) => [response.document, ...prev]);
+        return response.document;
+      }
+    } catch (err) {
+      setDocumentsError(err.message || 'Failed to upload medical document');
+      throw err;
+    }
+  };
+
+  const deleteMedicalDocument = async (id) => {
+    setDocumentsError(null);
+    try {
+      const response = await documentsAPI.delete(id);
+      if (response.success) {
+        setMongoDocuments((prev) => prev.filter((d) => d._id !== id && d.id !== id));
+        return true;
+      }
+    } catch (err) {
+      setDocumentsError(err.message || 'Failed to delete medical document');
+      throw err;
+    }
+  };
+
+  const getDocumentPresignedUrl = async (id) => {
+    const response = await documentsAPI.getPresignedUrl(id);
+    if (response.success && response.presignedUrl) {
+      return response.presignedUrl;
+    }
+    throw new Error(response.message || 'Failed to get document download URL');
+  };
+
+  // MongoDB Adoption Listings & Applications CRUD (Phase 5)
+  const createAdoptionListing = async (listingData) => {
+    setAdoptionListingsError(null);
+    try {
+      const response = await adoptionAPI.create(listingData);
+      if (response.success && response.listing) {
+        await fetchAdoptionListings();
+        return response.listing;
+      }
+      throw new Error(response.message || 'Failed to create adoption listing');
+    } catch (err) {
+      setAdoptionListingsError(err.message || 'Failed to create adoption listing');
+      throw err;
+    }
+  };
+
+  const updateAdoptionListing = async (id, listingData) => {
+    setAdoptionListingsError(null);
+    try {
+      const response = await adoptionAPI.update(id, listingData);
+      if (response.success && response.listing) {
+        await fetchAdoptionListings();
+        return response.listing;
+      }
+      throw new Error(response.message || 'Failed to update adoption listing');
+    } catch (err) {
+      setAdoptionListingsError(err.message || 'Failed to update adoption listing');
+      throw err;
+    }
+  };
+
+  const deleteAdoptionListing = async (id) => {
+    setAdoptionListingsError(null);
+    try {
+      const response = await adoptionAPI.delete(id);
+      if (response.success) {
+        setMongoAdoptionListings((prev) => prev.filter((l) => l._id !== id));
+        return true;
+      }
+      throw new Error(response.message || 'Failed to delete adoption listing');
+    } catch (err) {
+      setAdoptionListingsError(err.message || 'Failed to delete adoption listing');
+      throw err;
+    }
+  };
+
+  const applyForAdoption = async (listingId, applicationData) => {
+    setMyApplicationsError(null);
+    try {
+      const response = await adoptionAPI.apply(listingId, applicationData);
+      if (response.success && response.application) {
+        await fetchMyApplications();
+        await fetchAdoptionListings();
+        return response.application;
+      }
+      throw new Error(response.message || 'Failed to submit adoption application');
+    } catch (err) {
+      setMyApplicationsError(err.message || 'Failed to submit adoption application');
+      throw err;
+    }
+  };
+
+  const withdrawApplication = async (appId) => {
+    setMyApplicationsError(null);
+    try {
+      const response = await adoptionAPI.updateApplicationStatus(appId, { status: 'withdrawn' });
+      if (response.success) {
+        await fetchMyApplications();
+        return true;
+      }
+      throw new Error(response.message || 'Failed to withdraw application');
+    } catch (err) {
+      setMyApplicationsError(err.message || 'Failed to withdraw application');
+      throw err;
+    }
+  };
+
+  const deleteApplication = async (appId) => {
+    setMyApplicationsError(null);
+    try {
+      const response = await adoptionAPI.deleteApplication(appId);
+      if (response.success) {
+        setMyApplications((prev) => prev.filter((a) => a._id !== appId));
+        return true;
+      }
+      throw new Error(response.message || 'Failed to delete application');
+    } catch (err) {
+      setMyApplicationsError(err.message || 'Failed to delete application');
+      throw err;
+    }
+  };
+
+  const getListingApplications = async (listingId) => {
+    const response = await adoptionAPI.getListingApplications(listingId);
+    if (response.success && Array.isArray(response.applications)) {
+      return response.applications;
+    }
+    throw new Error(response.message || 'Failed to fetch listing applications');
+  };
+
+  const updateApplicationStatus = async (appId, status, notes) => {
+    const response = await adoptionAPI.updateApplicationStatus(appId, { status, notes });
+    if (response.success && response.application) {
+      await fetchAdoptionListings();
+      return response.application;
+    }
+    throw new Error(response.message || 'Failed to update application status');
+  };
+
   // Add an existing pet to the user's ecosystem
-  const addExistingPet = (petData) => {
+  const addExistingPet = async (petData) => {
+    if (user) {
+      const createdPet = await createPet({
+        ...petData,
+        temperature: petData.temperature || '',
+        height: petData.height || '',
+        color: petData.color || '',
+        themeColor: petData.themeColor ? String(petData.themeColor).trim().toLowerCase() : 'orange',
+        dob: petData.dob || '',
+        adoptionDate: petData.adoptionDate || '',
+        allergies: petData.allergies || [],
+        medicalConditions: petData.medicalConditions || [],
+        description: petData.medicalNotes || petData.description || '',
+      });
+
+      if (createdPet?._id) {
+        const vaccineEntries = Array.isArray(petData.vaccines)
+          ? petData.vaccines.filter(Boolean)
+          : (petData.vaccines || '').split(/\n|,/).map((entry) => entry.trim()).filter(Boolean);
+        for (const vax of vaccineEntries) {
+          try {
+            await createHealthRecord({
+              pet: createdPet._id,
+              type: 'vaccination',
+              title: vax,
+              status: 'completed',
+              date: new Date().toISOString(),
+            });
+          } catch (e) {
+            console.warn('Initial vaccine creation notice:', e.message);
+          }
+        }
+
+        const medicationEntries = Array.isArray(petData.medications)
+          ? petData.medications.filter(Boolean)
+          : (petData.medications || '').split(/\n|,/).map((entry) => entry.trim()).filter(Boolean);
+        for (const med of medicationEntries) {
+          try {
+            await createHealthRecord({
+              pet: createdPet._id,
+              type: 'medication',
+              title: med,
+              value: 'As directed',
+              description: 'Daily',
+              status: 'ongoing',
+              date: new Date().toISOString(),
+            });
+          } catch (e) {
+            console.warn('Initial medication creation notice:', e.message);
+          }
+        }
+      }
+
+      return createdPet;
+    }
+
     const id = `pet_${Date.now()}`;
     const pet = normalizePetRegistry([{ id, userId, ...petData }])[0];
     const petIndex = adoptions.length;
@@ -818,75 +1975,354 @@ export const EcosystemProvider = ({ children }) => {
     setQuizHistory((prev) => [{ ...result, userId, id: Date.now() }, ...prev]);
   };
 
-  const createCommunityPost = ({ title, body, communityId }) => {
-    const newPost = {
-      id: Date.now(),
-      authorId: userId || 'guest',
-      author: user?.fullName || 'Anonymous',
-      communityId,
-      title,
-      body,
-      votes: 0,
-      likedBy: [],
-      comments: 0,
-      savedBy: [],
-      date: 'Just now',
-      pinned: false,
-      commentsList: []
-    };
-    setCommunityPosts((prev) => [newPost, ...prev]);
-  };
+  // Normalize MongoDB posts to match frontend UI contract
+  const normalizedMongoPosts = useMemo(() => {
+    if (!Array.isArray(mongoCommunityPosts)) return [];
+    return mongoCommunityPosts.map((post) => {
+      let title = '';
+      let body = post.content || '';
+      if (post.content && post.content.includes('\n\n')) {
+        const parts = post.content.split('\n\n');
+        title = parts[0];
+        body = parts.slice(1).join('\n\n');
+      } else if (post.content && post.content.includes('\n')) {
+        const parts = post.content.split('\n');
+        title = parts[0];
+        body = parts.slice(1).join('\n');
+      } else {
+        title = post.content || (post.mediaKey ? 'Media Post' : 'Community Update');
+      }
 
-  const addCommentToPost = (postId, commentText) => {
-    if (!commentText.trim()) return;
+      const isUpvoted = Array.isArray(post.likes) && post.likes.some(
+        (l) => (l?._id || l)?.toString() === userId
+      );
+      const isDownvoted = Array.isArray(post.downvotes) && post.downvotes.some(
+        (l) => (l?._id || l)?.toString() === userId
+      );
+      const userVote = isUpvoted ? 1 : (isDownvoted ? -1 : 0);
 
-    setCommunityPosts((prev) =>
-      prev.map((post) => {
-        if (post.id !== postId) return post;
-        return {
-          ...post,
-          comments: post.comments + 1,
-          commentsList: [
-            ...post.commentsList,
-            {
-              id: Date.now(),
-              author: user?.fullName || 'Anonymous',
-              text: commentText,
-              date: 'Just now'
-            }
-          ]
-        };
-      })
-    );
-  };
+      const upCount = post.likesCount !== undefined ? post.likesCount : (post.likes?.length || 0);
+      const downCount = post.downvotesCount !== undefined ? post.downvotesCount : (post.downvotes?.length || 0);
+      const netVotes = upCount - downCount;
 
-  const toggleSavePost = (postId) => {
-    setCommunityPosts((prev) =>
-      prev.map((post) => {
-        if (post.id !== postId) return post;
-        const saved = post.savedBy.includes(userId);
-        return {
-          ...post,
-          savedBy: saved ? post.savedBy.filter((id) => id !== userId) : [...post.savedBy, userId]
-        };
-      })
-    );
-  };
+      const isSaved = Array.isArray(post.savedBy) && post.savedBy.some(
+        (s) => (s?._id || s)?.toString() === userId
+      );
 
-  const toggleVotePost = (postId, type) => {
-    setCommunityPosts((prev) =>
-      prev.map((post) => {
-        if (post.id !== postId) return post;
-        if (type === 'up') {
-          return { ...post, votes: post.votes + 1, likedBy: [...new Set([...post.likedBy, userId])] };
+      const resolvedMediaType = post.mediaType || (post.mediaKey?.match(/\.(mp4|webm)$/i) ? 'video' : (post.mediaKey ? 'image' : ''));
+
+      return {
+        id: post._id,
+        _id: post._id,
+        authorId: (post.author?._id || post.author)?.toString(),
+        author: post.author?.fullName || 'Petly Guardian',
+        authorRole: post.author?.role || 'user',
+        authorAvatar: post.author?.avatarUrl || '',
+        communityId: (post.category || 'General').toLowerCase().replace(/\s+/g, '-'),
+        category: post.category || 'General',
+        title,
+        body,
+        content: post.content || '',
+        mediaKey: post.mediaKey || '',
+        mediaType: resolvedMediaType,
+        mediaUrl: post.mediaUrl || '',
+        votes: netVotes,
+        userVote,
+        isLiked: isUpvoted,
+        likesCount: upCount,
+        downvotesCount: downCount,
+        likedBy: Array.isArray(post.likes) ? post.likes.map((l) => (l?._id || l)?.toString()) : [],
+        comments: post.commentsCount || 0,
+        commentsCount: post.commentsCount || 0,
+        commentsList: post.commentsList || [],
+        savedBy: Array.isArray(post.savedBy) ? post.savedBy.map((s) => (s?._id || s)?.toString()) : [],
+        isSaved,
+        date: post.createdAt ? formatRelativeTime(post.createdAt) : 'Recently',
+        createdAt: post.createdAt,
+        pinned: Boolean(post.pinned),
+        rawPost: post,
+      };
+    });
+  }, [mongoCommunityPosts, userId]);
+
+  const activeCommunityPosts = normalizedMongoPosts.length > 0 ? normalizedMongoPosts : (user ? [] : communityPosts);
+
+  const createCommunityPost = async ({ title, body, content, communityId, category, mediaKey, mediaType }) => {
+    const fullContent = (title && body) ? `${title}\n\n${body}` : (content || title || body || '');
+    const finalCategory = (category || 'General').trim();
+
+    let resolvedMediaType = (mediaType || '').trim();
+    if (!resolvedMediaType && mediaKey) {
+      resolvedMediaType = mediaKey.match(/\.(mp4|webm)$/i) ? 'video' : 'image';
+    }
+
+    if (user) {
+      setCommunityPostsError(null);
+      try {
+        const response = await communityAPI.createPost({
+          content: fullContent,
+          category: finalCategory,
+          mediaKey: mediaKey || '',
+          mediaType: resolvedMediaType,
+        });
+        if (response.success && response.post) {
+          await fetchCommunityPosts();
+          return response.post;
         }
-        return { ...post, votes: Math.max(post.votes - 1, 0) };
-      })
-    );
+        throw new Error(response.message || 'Failed to create post');
+      } catch (err) {
+        setCommunityPostsError(err.message || 'Failed to create post');
+        throw err;
+      }
+    } else {
+      const newPost = {
+        id: Date.now(),
+        authorId: userId || 'guest',
+        author: user?.fullName || 'Anonymous',
+        communityId: (finalCategory || communityId || 'dogs').toLowerCase().replace(/\s+/g, '-'),
+        category: finalCategory || 'General',
+        title: title || 'Community Update',
+        body: body || content || '',
+        mediaKey: mediaKey || '',
+        mediaType: resolvedMediaType,
+        mediaUrl: '',
+        votes: 0,
+        userVote: 0,
+        likedBy: [],
+        comments: 0,
+        savedBy: [],
+        isSaved: false,
+        date: 'Just now',
+        pinned: false,
+        commentsList: []
+      };
+      setCommunityPosts((prev) => [newPost, ...prev]);
+      return newPost;
+    }
   };
 
-  const deleteCommunityPost = (postId) => {
-    setCommunityPosts((prev) => prev.filter((post) => post.id !== postId));
+  const updateCommunityPost = async (id, { title, body, content, category, mediaKey, mediaType }) => {
+    const fullContent = (title && body) ? `${title}\n\n${body}` : (content || title || body || '');
+
+    if (user) {
+      setCommunityPostsError(null);
+      try {
+        const updatePayload = { content: fullContent };
+        if (category) updatePayload.category = category.trim();
+        if (mediaKey !== undefined) updatePayload.mediaKey = mediaKey;
+        if (mediaType !== undefined) updatePayload.mediaType = mediaType;
+        const response = await communityAPI.updatePost(id, updatePayload);
+        if (response.success && response.post) {
+          await fetchCommunityPosts();
+          return response.post;
+        }
+        throw new Error(response.message || 'Failed to update post');
+      } catch (err) {
+        setCommunityPostsError(err.message || 'Failed to update post');
+        throw err;
+      }
+    } else {
+      setCommunityPosts((prev) =>
+        prev.map((p) => (p.id === id ? { ...p, title: title || p.title, body: body || p.body } : p))
+      );
+    }
+  };
+
+  const deleteCommunityPost = async (id) => {
+    if (user) {
+      setCommunityPostsError(null);
+      try {
+        const response = await communityAPI.deletePost(id);
+        if (response.success) {
+          setMongoCommunityPosts((prev) => prev.filter((p) => p._id !== id));
+          return true;
+        }
+        throw new Error(response.message || 'Failed to delete post');
+      } catch (err) {
+        setCommunityPostsError(err.message || 'Failed to delete post');
+        throw err;
+      }
+    } else {
+      setCommunityPosts((prev) => prev.filter((post) => post.id !== id && post._id !== id));
+    }
+  };
+
+  const toggleVotePost = async (postId, type = 'up') => {
+    if (user) {
+      try {
+        const response = await communityAPI.toggleVote(postId, type);
+        if (response.success) {
+          setMongoCommunityPosts((prev) =>
+            prev.map((post) => {
+              if (post._id !== postId) return post;
+              const userIdStr = userId?.toString();
+              let nextLikes = Array.isArray(post.likes) ? post.likes.map((l) => (l?._id || l)?.toString()) : [];
+              let nextDownvotes = Array.isArray(post.downvotes) ? post.downvotes.map((d) => (d?._id || d)?.toString()) : [];
+
+              if (response.userVote === 1) {
+                if (!nextLikes.includes(userIdStr)) nextLikes.push(userIdStr);
+                nextDownvotes = nextDownvotes.filter((id) => id !== userIdStr);
+              } else if (response.userVote === -1) {
+                if (!nextDownvotes.includes(userIdStr)) nextDownvotes.push(userIdStr);
+                nextLikes = nextLikes.filter((id) => id !== userIdStr);
+              } else {
+                nextLikes = nextLikes.filter((id) => id !== userIdStr);
+                nextDownvotes = nextDownvotes.filter((id) => id !== userIdStr);
+              }
+
+              return {
+                ...post,
+                likes: nextLikes,
+                downvotes: nextDownvotes,
+                likesCount: response.likesCount !== undefined ? response.likesCount : nextLikes.length,
+                downvotesCount: response.downvotesCount !== undefined ? response.downvotesCount : nextDownvotes.length,
+              };
+            })
+          );
+          return response;
+        }
+      } catch (err) {
+        console.error('[EcosystemContext] Vote toggle failed:', err.message);
+        throw err;
+      }
+    } else {
+      setCommunityPosts((prev) =>
+        prev.map((post) => {
+          if (post.id !== postId) return post;
+          const currentVote = post.userVote || 0;
+          let newVote = 0;
+          if (type === 'up') {
+            newVote = currentVote === 1 ? 0 : 1;
+          } else {
+            newVote = currentVote === -1 ? 0 : -1;
+          }
+          const netDiff = newVote - currentVote;
+          return {
+            ...post,
+            userVote: newVote,
+            votes: (post.votes || 0) + netDiff,
+            likedBy: newVote === 1 ? [...new Set([...(post.likedBy || []), userId || 'guest'])] : (post.likedBy || []).filter(u => u !== (userId || 'guest')),
+          };
+        })
+      );
+    }
+  };
+
+  const toggleSavePost = async (postId) => {
+    if (user) {
+      try {
+        const response = await communityAPI.toggleSave(postId);
+        if (response.success) {
+          setMongoCommunityPosts((prev) =>
+            prev.map((post) => {
+              if (post._id !== postId) return post;
+              const userIdStr = userId?.toString();
+              const currentSaved = Array.isArray(post.savedBy) ? post.savedBy.map((s) => (s?._id || s)?.toString()) : [];
+              const nextSaved = response.saved
+                ? (currentSaved.includes(userIdStr) ? currentSaved : [...currentSaved, userIdStr])
+                : currentSaved.filter((id) => id !== userIdStr);
+              return {
+                ...post,
+                savedBy: nextSaved,
+              };
+            })
+          );
+          return response;
+        }
+      } catch (err) {
+        console.error('[EcosystemContext] Save toggle failed:', err.message);
+        throw err;
+      }
+    } else {
+      setCommunityPosts((prev) =>
+        prev.map((post) => {
+          if (post.id !== postId) return post;
+          const uId = userId || 'guest';
+          const isCurrentlySaved = (post.savedBy || []).includes(uId);
+          const nextSaved = isCurrentlySaved
+            ? (post.savedBy || []).filter(u => u !== uId)
+            : [...(post.savedBy || []), uId];
+          return {
+            ...post,
+            savedBy: nextSaved,
+            isSaved: !isCurrentlySaved,
+          };
+        })
+      );
+    }
+  };
+
+  const addCommentToPost = async (postId, commentText) => {
+    if (!commentText || !commentText.trim()) return;
+
+    if (user) {
+      try {
+        const response = await communityAPI.addComment(postId, { content: commentText.trim() });
+        if (response.success && response.comment) {
+          setMongoCommunityPosts((prev) =>
+            prev.map((p) => (p._id === postId ? { ...p, commentsCount: (p.commentsCount || 0) + 1 } : p))
+          );
+          return response.comment;
+        }
+        throw new Error(response.message || 'Failed to add comment');
+      } catch (err) {
+        console.error('[EcosystemContext] Add comment failed:', err.message);
+        throw err;
+      }
+    } else {
+      setCommunityPosts((prev) =>
+        prev.map((post) => {
+          if (post.id !== postId) return post;
+          return {
+            ...post,
+            comments: post.comments + 1,
+            commentsList: [
+              ...post.commentsList,
+              {
+                id: Date.now(),
+                author: user?.fullName || 'Anonymous',
+                text: commentText,
+                date: 'Just now'
+              }
+            ]
+          };
+        })
+      );
+    }
+  };
+
+  const fetchPostComments = async (postId) => {
+    try {
+      const response = await communityAPI.getComments(postId);
+      if (response.success && Array.isArray(response.comments)) {
+        return response.comments;
+      }
+      return [];
+    } catch (err) {
+      console.error('[EcosystemContext] Fetch comments failed:', err.message);
+      return [];
+    }
+  };
+
+  const updateComment = async (commentId, content) => {
+    const response = await communityAPI.updateComment(commentId, { content });
+    if (response.success && response.comment) {
+      return response.comment;
+    }
+    throw new Error(response.message || 'Failed to update comment');
+  };
+
+  const deleteComment = async (commentId, postId) => {
+    const response = await communityAPI.deleteComment(commentId);
+    if (response.success) {
+      if (postId) {
+        setMongoCommunityPosts((prev) =>
+          prev.map((p) => (p._id === postId ? { ...p, commentsCount: Math.max((p.commentsCount || 1) - 1, 0) } : p))
+        );
+      }
+      return true;
+    }
+    throw new Error(response.message || 'Failed to delete comment');
   };
 
   const togglePinPost = (postId) => {
@@ -895,6 +2331,97 @@ export const EcosystemProvider = ({ children }) => {
         post.id === postId ? { ...post, pinned: !post.pinned } : post
       )
     );
+  };
+
+  const fetchSocieties = useCallback(async () => {
+    try {
+      const response = await communityAPI.getSocieties();
+      if (response.success && Array.isArray(response.societies)) {
+        setCommunities(response.societies);
+        try {
+          localStorage.setItem('petly_comm_list', JSON.stringify(response.societies));
+        } catch {}
+      }
+    } catch (err) {
+      console.warn('[EcosystemContext] fetchSocieties notice:', err.message);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchSocieties();
+  }, [fetchSocieties]);
+
+  const createSociety = async ({ name, icon }) => {
+    if (user) {
+      const res = await communityAPI.createSociety({ name, icon });
+      if (res.success && res.society) {
+        setCommunities((prev) => {
+          const next = [...prev, res.society];
+          try {
+            localStorage.setItem('petly_comm_list', JSON.stringify(next));
+          } catch {}
+          return next;
+        });
+        return res.society;
+      }
+      throw new Error(res.message || 'Failed to create society');
+    } else {
+      const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+      const localSociety = {
+        id: `society-${Date.now()}`,
+        name,
+        slug,
+        icon: icon || '🐾',
+        members: '1',
+        adminId: userId || 'guest',
+        isBuiltIn: false,
+      };
+      setCommunities((prev) => {
+        const next = [...prev, localSociety];
+        try {
+          localStorage.setItem('petly_comm_list', JSON.stringify(next));
+        } catch {}
+        return next;
+      });
+      return localSociety;
+    }
+  };
+
+  const deleteSociety = async (societyId, societyName) => {
+    const isMongoId = Boolean(societyId && /^[0-9a-fA-F]{24}$/.test(String(societyId)));
+    if (user && isMongoId) {
+      const res = await communityAPI.deleteSociety(societyId);
+      if (res.success) {
+        setCommunities((prev) => {
+          const next = prev.filter((s) => s.id !== societyId && s._id !== societyId);
+          try {
+            localStorage.setItem('petly_comm_list', JSON.stringify(next));
+          } catch {}
+          return next;
+        });
+        // Reassign posts in state
+        setMongoCommunityPosts((prev) =>
+          prev.map((p) => (p.category?.toLowerCase() === societyName?.toLowerCase() ? { ...p, category: 'General' } : p))
+        );
+        // Refresh posts from server to sync reassigned posts
+        await fetchCommunityPosts();
+        return res;
+      }
+      throw new Error(res.message || 'Failed to delete society');
+    } else {
+      // Local/guest fallback
+      setCommunities((prev) => {
+        const next = prev.filter((s) => s.id !== societyId && s._id !== societyId);
+        try {
+          localStorage.setItem('petly_comm_list', JSON.stringify(next));
+        } catch {}
+        return next;
+      });
+      setCommunityPosts((prev) =>
+        prev.map((p) => (p.category?.toLowerCase() === societyName?.toLowerCase() ? { ...p, category: 'General' } : p))
+      );
+      return { success: true };
+    }
   };
 
   const addMessageToConversation = (conversationId, message) => {
@@ -966,6 +2493,51 @@ export const EcosystemProvider = ({ children }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId, aiConversations]);
 
+  const submitQuizAttempt = async (attemptData) => {
+    if (user) {
+      const response = await quizAPI.submitAttempt(attemptData);
+      if (response.success && response.attempt) {
+        setMongoQuizAttempts((prev) => [response.attempt, ...prev]);
+        return response.attempt;
+      }
+      throw new Error(response.message || 'Failed to submit quiz attempt');
+    } else {
+      // Guest local attempt fallback
+      const localAttempt = {
+        _id: `attempt-${Date.now()}`,
+        id: `attempt-${Date.now()}`,
+        category: attemptData.category || 'General',
+        score: attemptData.score || 0,
+        totalQuestions: attemptData.totalQuestions || attemptData.answers?.length || 1,
+        percentage: attemptData.percentage || 0,
+        answers: attemptData.answers || [],
+        createdAt: new Date().toISOString(),
+      };
+      setQuizHistory((prev) => [localAttempt, ...(prev || [])]);
+      return localAttempt;
+    }
+  };
+
+  const fetchQuizQuestions = async (params = '') => {
+    return quizAPI.getQuestions(params);
+  };
+
+  const createQuizQuestion = async (data) => {
+    return quizAPI.createQuestion(data);
+  };
+
+  const updateQuizQuestion = async (id, data) => {
+    return quizAPI.updateQuestion(id, data);
+  };
+
+  const deleteQuizQuestion = async (id) => {
+    return quizAPI.deleteQuestion(id);
+  };
+
+  const getQuizAttemptDetails = async (id) => {
+    return quizAPI.getAttemptById(id);
+  };
+
   return (
     <EcosystemContext.Provider
       value={{
@@ -980,6 +2552,8 @@ export const EcosystemProvider = ({ children }) => {
         wishlistProducts: currentWishlistProducts,
         toggleWishlistPet,
         toggleWishlistProduct,
+        removeFromWishlistPet,
+        removeFromWishlistProduct,
         weightHistory: currentWeightHistory,
         vaccines: currentVaccines,
         timeline: currentTimeline,
@@ -995,14 +2569,26 @@ export const EcosystemProvider = ({ children }) => {
         addBooking,
         quizHistory: currentQuizHistory,
         addQuizResult,
-        communityPosts,
+        communityPosts: activeCommunityPosts,
+        mongoCommunityPosts,
+        communityPostsLoading,
+        communityPostsError,
+        fetchCommunityPosts,
         communities,
         setCommunities,
+        fetchSocieties,
+        createSociety,
+        deleteSociety,
         createCommunityPost,
-        addCommentToPost,
-        toggleSavePost,
-        toggleVotePost,
+        updateCommunityPost,
         deleteCommunityPost,
+        toggleVotePost,
+        toggleLikePost: toggleVotePost,
+        addCommentToPost,
+        fetchPostComments,
+        updateComment,
+        deleteComment,
+        toggleSavePost,
         togglePinPost,
         messages: userMessages,
         addMessageToConversation,
@@ -1019,7 +2605,98 @@ export const EcosystemProvider = ({ children }) => {
         removeMilestone,
         setActiveAIConversationId,
         isCartOpen,
-        setIsCartOpen
+        setIsCartOpen,
+        // MongoDB Pet CRUD (Phase 4A)
+        pets: currentAdoptions,
+        mongoPets,
+        petsLoading,
+        petsError,
+        fetchPets,
+        createPet,
+        updatePet,
+        deletePet,
+        // MongoDB Health & Documents (Phase 4B)
+        mongoHealthRecords,
+        healthRecords: mongoHealthRecords,
+        healthLoading,
+        healthError,
+        fetchHealthRecords,
+        createHealthRecord,
+        updateHealthRecord,
+        deleteHealthRecord,
+        mongoDocuments,
+        documents: mongoDocuments,
+        documentsLoading,
+        documentsError,
+        fetchMedicalDocuments,
+        uploadMedicalDocument,
+        deleteMedicalDocument,
+        getDocumentPresignedUrl,
+        // MongoDB Adoption Listings & Applications (Phase 5)
+        mongoAdoptionListings,
+        adoptionListings: mongoAdoptionListings,
+        adoptionListingsLoading,
+        adoptionListingsError,
+        fetchAdoptionListings,
+        createAdoptionListing,
+        updateAdoptionListing,
+        deleteAdoptionListing,
+        myApplications,
+        myApplicationsLoading,
+        myApplicationsError,
+        fetchMyApplications,
+        applyForAdoption,
+        withdrawApplication,
+        deleteApplication,
+        getListingApplications,
+        updateApplicationStatus,
+        // MongoDB Quiz & Assessment (Phase 7)
+        mongoQuizAttempts,
+        quizAttempts: mongoQuizAttempts,
+        quizAttemptsLoading,
+        quizAttemptsError,
+        fetchMyQuizAttempts,
+        submitQuizAttempt,
+        fetchQuizQuestions,
+        createQuizQuestion,
+        updateQuizQuestion,
+        deleteQuizQuestion,
+        getQuizAttemptDetails,
+        // Companion Match Persistence (Phase 7 Extension)
+        companionMatches,
+        companionMatchesLoading,
+        companionMatchesError,
+        fetchMyCompanionMatches,
+        saveCompanionMatch,
+        getCompanionMatchDetails,
+        // MongoDB Store & Orders (Phase 8)
+        products: storeProducts,
+        storeProducts,
+        storeProductsLoading,
+        storeProductsError,
+        fetchStoreProducts,
+        mongoWishlist,
+        mongoWishlistPets,
+        wishlistLoading,
+        fetchWishlist,
+        mongoCart,
+        cartLoading,
+        fetchCart,
+        orders: storeOrders,
+        storeOrders,
+        ordersLoading,
+        fetchOrders,
+        createOrder,
+        cancelOrder,
+        // Services (Phase 8C)
+        serviceProviders: mongoServiceProviders,
+        serviceProvidersLoading,
+        fetchServiceProviders,
+        serviceBookings: mongoServiceBookings,
+        serviceBookingsLoading,
+        fetchServiceBookings,
+        createServiceBooking,
+        cancelServiceBooking,
       }}
     >
       {children}

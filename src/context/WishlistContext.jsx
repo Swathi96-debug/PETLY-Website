@@ -4,9 +4,23 @@ import { useEcosystem } from './EcosystemContext';
 const WishlistContext = createContext();
 
 export const WishlistProvider = ({ children }) => {
-  const { wishlistPets, wishlistProducts, toggleWishlistPet, toggleWishlistProduct } = useEcosystem();
+  const { 
+    wishlistPets, 
+    wishlistProducts, 
+    toggleWishlistPet, 
+    toggleWishlistProduct,
+    removeFromWishlistPet,
+    removeFromWishlistProduct
+  } = useEcosystem();
   return (
-    <WishlistContext.Provider value={{ wishlistPets, wishlistProducts, toggleWishlistPet, toggleWishlistProduct }}>
+    <WishlistContext.Provider value={{ 
+      wishlistPets, 
+      wishlistProducts, 
+      toggleWishlistPet, 
+      toggleWishlistProduct,
+      removeFromWishlistPet,
+      removeFromWishlistProduct
+    }}>
       {children}
     </WishlistContext.Provider>
   );
